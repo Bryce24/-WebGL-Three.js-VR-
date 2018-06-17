@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<title>Web VR boilerplate</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0, shrink-to-fit=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style>
+body {
+  width: 100%;
+  height: 100%;
+  background-color: #000;
+  color: #fff;
+  margin: 0px;
+  padding: 0;
+  overflow: hidden;
+}
+
+#b { position:relative; }
+#a { position:absolute; top:0; left:0; z-index:99; width:140px;height:36px;line-height:18px;font-size:15px;
+background:url("bg26.jpg") no-repeat left top;color:#FFF;}
+</style>
+</head>
+
+<body>
+  <div id="container">
+<div id="b">
+<input type="button" id="a" value="音乐（播放/停止）"/>
+</div>
+  </div>
+</body>
+
+<script>
+/*
+ * Debug parameters.
+ */
+WebVRConfig = {
+  /**
+   * webvr-polyfill configuration
+   */
+
+  // Forces availability of VR mode.
+  //FORCE_ENABLE_VR: true, // Default: false.
+
+  // Complementary filter coefficient. 0 for accelerometer, 1 for gyro.
+  //互补滤波系数。加速度计在静止的时候是很准的，但运动时的角度噪声很大，陀螺仪反之。
+  //互补滤波器徘徊在信任陀螺仪和加速度计的边界。首先选择一个时间常数，然后用它来计算滤波器系数。
+  //例如陀螺仪的漂移是每秒2度，则可能需要一个少于一秒的时间常数去保证在每一个方向上的漂移不会超过2度。
+  //但是当时间常数越低，越多加速度计的噪声将允许通过。所以这是一个权衡的内容。
+  //K_FILTER: 0.98, // Default: 0.98.
+
+  // How far into the future to predict during fast motion.
+  //由于有给定的方向以及陀螺仪信息，选择允许预测多长时间之内的设备方向，在设备快速移动的情况下可以让渲染比较流畅。
+  //PREDICTION_TIME_S: 0.040, // Default: 0.040 (in seconds).
+
+  // Flag to disable touch panner. In case you have your own touch controls
+  //TOUCH_PANNER_DISABLED: true, // Default: false.
+
+  // Enable yaw panning only, disabling roll and pitch. This can be useful for
+  // panoramas with nothing interesting above or below.
+  // 仅关心左右角度变化，忽略上下和倾斜等。
+  // YAW_ONLY: true, // Default: false.
+
+  // Enable the deprecated version of the API (navigator.getVRDevices).
+  //ENABLE_DEPRECATED_API: true, // Default: false.
+
+  // Scales the recommended buffer size reported by WebVR, which can improve
+  // performance. Making this very small can lower the effective resolution of
+  // your scene.
+  //在VR显示模式下对WebVR推荐的屏幕比例进行缩放。在IOS下如果不为0.5会出现显示问题，查看
+  //https://github.com/borismus/webvr-polyfill/pull/106
+  BUFFER_SCALE: 0.5, // default: 1.0
+
+  // Allow VRDisplay.submitFrame to change gl bindings, which is more
+  // efficient if the application code will re-bind it's resources on the
+  // next frame anyway.
+  // Dirty bindings include: gl.FRAMEBUFFER_BINDING, gl.CURRENT_PROGRAM,
+  // gl.ARRAY_BUFFER_BINDING, gl.ELEMENT_ARRAY_BUFFER_BINDING,
+  // and gl.TEXTURE_BINDING_2D for texture unit 0
+  // Warning: enabling this might lead to rendering issues.
+  //允许 VRDisplay.submitFrame使用脏矩形渲染。但是开启此特性可能会出现渲染问题。
+  //DIRTY_SUBMIT_FRAME_BINDINGS: true // default: false
+};
+</script>
+
+    <script src="js/tween.min.js"></script>
+    <script src="js/three.js"></script><!--这里的关系位置一开始没有放对，要后引用后面的东西才行-->
+    <script src="js/Projector.js"></script>
+    <script src="js/CanvasRenderer.js"></script>
+    <script src="js/OBJLoader.js"></script>
+    <script src="js/Detector.js"></script>
+    <script src="js/OrbitControls.js"></script>
+    <script src="js/dat.gui.min.js"></script>
+<!--
+  A polyfill for Promises. Needed for IE and Edge.
+  -->
+<script src="js/es6-promise.js"></script>
+
+<!--
+  three.js 3d library
+  -->
+<!-- <script src="node_modules/three/three.js"></script> -->
+
+<!--
+  VRControls.js acquires positional information from connected VR devices and applies the transformations to a three.js camera object.
+  从连接的VR设备中获得位置信息并应用在camera对象上
+   -->
+<script src="js/VRControls.js"></script>
+
+<!--
+  VREffect.js handles stereo camera setup and rendering.
+  处理立体视觉和绘制相关
+  -->
+<script src="js/VREffect.js"></script>
+
+<!--
+  A polyfill for WebVR using the Device{Motion,Orientation}Event API.
+  -->
+<script src="js/webvr-polyfill.js"></script>
+
+<!--
+  Helps enter and exit VR mode, provides best practices while in VR.
+  界面按钮以及进入/退出VR模式的控制等
+  -->
+<script src="js/webvr-manager.js"></script>
+
+
+<script>
+
+
+       // Setup three.js WebGL renderer. Note: Antialiasing is a big performance hit.
+       // Only enable it if you actually need to.
+ 
+
+var renderer = new THREE.WebGLRenderer({antialias: true});
+renderer.setPixelRatio(window.devicePixelRatio);
+  container = document.getElementById( 'container' );
+       // Append the canvas element created by the renderer to document body element.
+document.body.appendChild(renderer.domElement);
+
+       // Create a three.js scene.
+var scene = new THREE.Scene();
+
+       // Create a three.js camera.
+var camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+
+       // Apply VR headset positional data to camera.
+var controls = new THREE.VRControls(camera);
+       //站立姿态
+controls.standing = true;
+      // Apply VR stereo rendering to renderer.
+var effect = new THREE.VREffect(renderer);
+effect.setSize(window.innerWidth, window.innerHeight);
+
+      // Create a VR manager helper to enter and exit VR mode.
+      //按钮和全屏模式管理
+var params = {
+  hideButton: false, // Default: false.
+  isUndistorted: false // Default: false.
+};
+
+var manager = new WebVRManager(renderer, effect, params);
+
+// Add a repeating grid as a skybox.
+var boxSize = 5;
+var loader = new THREE.TextureLoader();
+
+//webvr变量结束
+
+//我自己的加入begin
+   var actions,settings;
+      var skeleton, mesh,mixer;
+      var crossFadeControls = [];
+      var idleAction, walkAction, runAction;
+      var idleWeight, walkWeight, runWeight;
+      var url = 'textures/marine_anims_core.json';
+      //对于粒子效果的变量
+      var clock = new THREE.Clock();
+      var singleStepMode = false;
+      var sizeOfNextStep = 0;
+      //对于场景的视觉效果的控制
+      var objects=[];
+      var materials2=[];
+      var projector,parameters;
+    //  var camera, scene, renderer,light;
+      var texture_placeholder,
+      isUserInteracting = false,
+      onMouseDownMouseX = 0, onMouseDownMouseY = 0,
+      lon = 90, onMouseDownLon = 0,
+      lat = 0, onMouseDownLat = 0,
+      phi = 0, theta = 0,
+      target = new THREE.Vector3();
+      //获取索要控制的DIV的id
+      container = document.getElementById( 'container' );
+            //笔画
+            var programStroke = function ( context ) {
+
+        context.lineWidth = 0.025;
+        context.beginPath();
+        context.arc( 0, 0, 0.5, 0, PI2, true );
+        context.stroke();
+
+      };
+
+
+            //调用初始化函数
+      init();
+
+
+
+            //初始化函数实现
+      function init() {
+               
+               //设置天空盒子（利用的是webgl方法加载的）
+        texture_placeholder = document.createElement( 'canvas' );
+        texture_placeholder.width = 128;
+        texture_placeholder.height = 128;
+
+
+            //加载模型函数begin
+            
+
+              //在人物身上打一束白色的光
+        light = new THREE.PointLight( 0xffffff, 2, 500 );
+        light.position.y = 200;
+        light.position.x = -200;
+
+      //模型的加载 
+      new THREE.ObjectLoader().load( url, function ( loadedObject ) {
+        loadedObject.traverse( function ( child ) {
+          if ( child instanceof THREE.SkinnedMesh ) {
+            mesh = child;
+          }
+        } );
+        if ( mesh === undefined ) {
+          alert( 'Unable to find a SkinnedMesh in this place:\n\n' + url + '\n\n' );
+          return;
+        }
+        //加载模型的网格
+        mesh.rotation.y = - 135 * Math.PI / 180;
+
+             //设置人物的大小和位置
+                mesh.scale.x=0.0025;
+                mesh.scale.y=0.0025;
+                mesh.scale.z=0.0025;
+                
+                mesh.position.y=-0.4;
+                mesh.position.x=-0.2;
+                mesh.position.z=0.2;
+
+                mesh.rotation.y=270;
+
+                //加载外层的蒙皮
+        skeleton = new THREE.SkeletonHelper( mesh );
+        skeleton.visible = false;
+               //创建一个控制面板
+        createPanel();
+            
+                //将骨骼绑定到meshs上
+        mixer = new THREE.AnimationMixer( mesh );
+        idleAction = mixer.clipAction( 'idle' );
+        walkAction = mixer.clipAction( 'walk' );
+        runAction = mixer.clipAction( 'run' );
+        actions = [ idleAction, walkAction, runAction ];
+
+                //激活动作
+        activateAllActions();
+        window.addEventListener( 'resize', onWindowResize, false );
+        animate();
+
+        //加入
+        scene.add( mesh );
+        scene.add( skeleton );
+        scene.add(light);
+      } );
+
+
+    //加载模型函数end
+    
+
+
+    //加载天空盒子begin
+                //声明天空盒子加载所需要的变量
+                var context = texture_placeholder.getContext( '2d' );
+                var textures = getTexturesFromAtlasFile( "skybox/CQ.jpg", 6 );
+                //监听音乐的变量
+               
+                //设置渲染器该渲染器为webgl渲染器
+                renderer = new THREE.WebGLRenderer( { antialias: true } );
+        renderer.setSize( window.innerWidth, window.innerHeight );
+        renderer.setPixelRatio( window.devicePixelRatio );
+
+        //设置camera的相关属性
+        camera = new THREE.PerspectiveCamera( 90, window.innerWidth / window.innerHeight, 0.1, 100 );
+        camera.position.z = 0.01;
+        camera.position.y = 0;
+          
+          //加载场景
+        scene = new THREE.Scene();
+        context.fillStyle = 'rgb( 200, 200, 200 )';
+        context.fillRect( 0, 0, texture_placeholder.width, texture_placeholder.height );
+
+        //将天空盒子读取
+          materials = [];
+      for ( var i = 0; i < 6; i ++ ) {
+        materials.push( new THREE.MeshBasicMaterial( { map: textures[ i ] } ) );
+      }
+                
+                //将天空盒子放进去
+        mesh = new THREE.Mesh( new THREE.CubeGeometry( 1, 1, 1 ), materials );
+        mesh.geometry.scale( 1, 1, - 1 );
+        scene.add( mesh );
+        //加载天空盒子end
+        
+
+
+  //加载小方块
+      projector = new THREE.Projector();
+      //加载十个小方块
+      var xiaofang = new THREE.BoxGeometry( 10, 10, 10 );
+        for ( var i = 0; i < 10; i ++ ) {
+          var object = new THREE.Mesh( xiaofang, new THREE.MeshBasicMaterial( { color: Math.random() * 0xffffff, opacity: 0.01} ) );
+          object.position.x = Math.random() * 0.4 -0.08;
+          object.position.y = Math.random() * 0.4 -0.06;
+          object.position.z = Math.random() * 0.4 -0.08;
+          object.scale.x = Math.random() * 0.002 + 0.001;
+          object.scale.y = Math.random() * 0.002 + 0.001;
+          object.scale.z = Math.random() * 0.002 + 0.001;
+          object.rotation.x = Math.random() * 2 * Math.PI;
+          object.rotation.y = Math.random() * 2 * Math.PI;
+          object.rotation.z = Math.random() * 2 * Math.PI;
+          scene.add( object );
+          objects.push(object);
+        }
+
+
+
+ 
+
+            //加入粒子系统
+             scene.fog = new THREE.FogExp2( 0x000000, 0.0008 );
+        var geometry = new THREE.BufferGeometry();
+        var vertices = [];
+        var textureLoader = new THREE.TextureLoader();
+        var sprite1 = textureLoader.load( 'textures/sprites/snowflake1.png' );
+        var sprite2 = textureLoader.load( 'textures/sprites/snowflake2.png' );
+        var sprite3 = textureLoader.load( 'textures/sprites/snowflake3.png' );
+        var sprite4 = textureLoader.load( 'textures/sprites/snowflake4.png' );
+        var sprite5 = textureLoader.load( 'textures/sprites/snowflake5.png' );
+        for ( i = 0; i < 10000; i ++ ) {
+          var x = Math.random() * 2000 - 1000;
+          var y = Math.random() * 2000 - 1000;
+          var z = Math.random() * 2000 - 1000;
+          vertices.push( x, y, z );
+        }
+        geometry.addAttribute( 'position', new THREE.Float32BufferAttribute( vertices, 3 ) );
+        parameters = [
+          [ [ 1.0, 0.2, 0.5 ], sprite2, 20 ],
+          [ [ 0.95, 0.1, 0.5 ], sprite3, 15 ],
+          [ [ 0.90, 0.05, 0.5 ], sprite1, 10 ],
+          [ [ 0.85, 0, 0.5 ], sprite5, 8 ],
+          [ [ 0.80, 0, 0.5 ], sprite4, 5 ]
+        ];
+        for ( var i = 0; i < parameters.length; i ++ ) {
+          var color  = parameters[ i ][ 0 ];
+          var sprite = parameters[ i ][ 1 ];
+          var size   = parameters[ i ][ 2 ];
+          materials2[ i ] = new THREE.PointsMaterial( { size: size, map: sprite, blending: THREE.AdditiveBlending, depthTest: false, transparent : true } );
+          materials2[ i ].color.setHSL( color[ 0 ], color[ 1 ], color[ 2 ] );
+          var particles = new THREE.Points( geometry, materials2[i] );
+          particles.rotation.x = Math.random() * 6;
+          particles.rotation.y = Math.random() * 6;
+          particles.rotation.z = Math.random() * 6;
+          scene.add( particles );
+                
+  }
+}
+
+
+//初始化结束
+ 
+//关于音乐控制begin
+
+
+var listener = new THREE.AudioListener(); 
+ //加入音乐
+         camera.add( listener ); 
+          var sound = new THREE.Audio( listener ); 
+          var audioLoader = new THREE.AudioLoader(); audioLoader.load( 'sounds/M.mp3', function( buffer ) { 
+          sound.setBuffer( buffer ); 
+          sound.setLoop( true );
+          sound.setVolume( 0.5 );
+             sound.play(); 
+           })
+
+
+var isplaying=true;//音乐控制变量
+
+
+//对于音乐播放/暂停的按钮的控制
+
+
+var btn1 = document.getElementById('a');
+function abc() {
+  if(isplaying==true)
+{
+  sound.pause();
+  isplaying=false;
+}  
+else
+{ 
+  sound.play();
+  isplaying=true;
+}
+  }
+btn1.onclick = abc; 
+
+
+
+//关于音乐控制end
+
+
+//我自己的加入的end
+
+
+//关于webvr功能方面begin
+function onTextureLoaded(texture) {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(boxSize, boxSize);
+
+  var geometry = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
+  var material = new THREE.MeshBasicMaterial({
+    map: texture,
+    color: 0x01BE00,
+    side: THREE.BackSide
+  });
+
+  // Align the skybox to the floor (which is at y=0).
+  skybox = new THREE.Mesh(geometry, material);
+  skybox.position.y = boxSize/2;
+  scene.add(skybox);
+
+  // For high end VR devices like Vive and Oculus, take into account the stage
+  // parameters provided.
+  //在高端的设备上，要考虑到设备提供的场景信息的更新。
+  setupStage();
+}
+
+// Create 3D objects.
+var geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+var material = new THREE.MeshNormalMaterial();
+
+// Kick off animation loop
+
+window.addEventListener('resize', onResize, true);
+window.addEventListener('vrdisplaypresentchange', onResize, true);
+
+// Request animation frame loop function
+var lastRender = 0;
+function animate(timestamp) {
+  var delta = Math.min(timestamp - lastRender, 500);
+  lastRender = timestamp;
+
+  //立方体的旋转
+  cube.rotation.y += delta * 0.0006;
+
+  // Update VR headset position and apply to camera.
+  //更新获取HMD的信息
+  controls.update();
+
+  // Render the scene through the manager.
+  //进行camera更新和场景绘制
+  manager.render(scene, camera, timestamp);
+
+  requestAnimationFrame(animate);
+}
+
+function onResize(e) {
+  effect.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+}
+
+var display;
+
+// Get the HMD, and if we're dealing with something that specifies
+// stageParameters, rearrange the scene.
+function setupStage() {
+  navigator.getVRDisplays().then(function(displays) {
+    if (displays.length > 0) {
+      display = displays[0];
+      if (display.stageParameters) {
+        setStageDimensions(display.stageParameters);
+      }
+    }
+  });
+}
+
+function setStageDimensions(stage) {
+  // Make the skybox fit the stage.
+  var material = skybox.material;
+  scene.remove(skybox);
+
+  // Size the skybox according to the size of the actual stage.
+  var geometry = new THREE.BoxGeometry(stage.sizeX, boxSize, stage.sizeZ);
+  skybox = new THREE.Mesh(geometry, material);
+
+  // Place it on the floor.
+  skybox.position.y = boxSize/2;
+  scene.add(skybox);
+
+  // Place the cube in the middle of the scene, at user height.
+  cube.position.set(0, controls.userHeight, 0);
+}
+//关于webvr功能方面end
+
+
+//我自己的加入的功能开始
+//消息响应begin
+           
+           
+           //鼠标点击的响应函数
+      function onDocumentMouseDown( event ) {
+        event.preventDefault();
+        isUserInteracting = true;
+        onPointerDownPointerX = event.clientX;
+        onPointerDownPointerY = event.clientY;
+        onPointerDownLon = lon;
+        onPointerDownLat = lat;
+            //鼠标点击小方块后的响应方法
+        var vector = new THREE.Vector3( ( event.clientX / window.innerWidth ) * 2 - 1, - ( event.clientY / window.innerHeight ) * 2 + 1, 0.5 );
+        projector.unprojectVector( vector, camera );
+        var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+        var intersects = raycaster.intersectObjects(objects);
+        if ( intersects.length > 0 ) {
+          //调用tween函数进行动作
+            new TWEEN.Tween(intersects[0].object.rotation).to({
+                x: Math.random() * 2 * Math.PI, y: Math.random() * 2 * Math.PI, z: Math.random() * 2 * Math.PI
+            }, 2000).easing(TWEEN.Easing.Elastic.Out).start();          
+        }
+      }
+
+
+            //对于鼠标移动事件的相关处理函数
+      function onDocumentMouseMove( event ) {
+        if ( isUserInteracting === true ) {
+          lon = ( onPointerDownPointerX - event.clientX ) * 0.1 + onPointerDownLon;
+          lat = ( event.clientY - onPointerDownPointerY ) * 0.1 + onPointerDownLat;
+        }
+      }
+
+
+            //对于鼠标弹起的函数
+      function onDocumentMouseUp( event ) {
+        isUserInteracting = false;
+      }
+
+
+            //对于鼠标滚轮的函数
+      function onDocumentMouseWheel( event ) {
+        camera.fov -= event.wheelDeltaY * 0.05;
+        camera.updateProjectionMatrix();
+
+      }
+
+
+            //对于触摸开始的函数
+      function onDocumentTouchStart( event ) {
+        if ( event.touches.length == 1 ) {
+          event.preventDefault();
+          onPointerDownPointerX = event.touches[ 0 ].pageX;
+          onPointerDownPointerY = event.touches[ 0 ].pageY;
+          onPointerDownLon = lon;
+          onPointerDownLat = lat;
+        }
+
+      }
+
+
+            //对于触摸移动函数
+      function onDocumentTouchMove( event ) {
+        if ( event.touches.length == 1 ) {
+          event.preventDefault();
+          lon = ( onPointerDownPointerX - event.touches[0].pageX ) * 0.1 + onPointerDownLon;
+          lat = ( event.touches[0].pageY - onPointerDownPointerY ) * 0.1 + onPointerDownLat;
+        }
+      }
+            //消息响应end
+
+
+
+
+//关于小人动画begin
+        //动画控制面板创建函数
+    function createPanel() {
+
+        var panel = new dat.GUI( { width: 310 } );
+
+        var folder1 = panel.addFolder( 'Visibility' );
+        var folder2 = panel.addFolder( 'Activation/Deactivation' );
+        var folder3 = panel.addFolder( 'Pausing/Stepping' );
+        var folder4 = panel.addFolder( 'Crossfading' );
+        var folder5 = panel.addFolder( 'Blend Weights' );
+        var folder6 = panel.addFolder( 'General Speed' );
+
+        settings = {
+          'show model':            true,
+          'show skeleton':         false,
+          'deactivate all':        deactivateAllActions,
+          'activate all':          activateAllActions,
+          'pause/continue':        pauseContinue,
+          'make single step':      toSingleStepMode,
+          'modify step size':      0.05,
+          'from walk to idle':     function () { prepareCrossFade( walkAction, idleAction, 1.0 ) },
+          'from idle to walk':     function () { prepareCrossFade( idleAction, walkAction, 0.5 ) },
+          'from walk to run':      function () { prepareCrossFade( walkAction, runAction, 2.5 ) },
+          'from run to walk':      function () { prepareCrossFade( runAction, walkAction, 5.0 ) },
+          'use default duration':  true,
+          'set custom duration':   3.5,
+          'modify idle weight':    0.0,
+          'modify walk weight':    1.0,
+          'modify run weight':     0.0,
+          'modify time scale':     1.0
+        };
+
+        folder1.add( settings, 'show model' ).onChange( showModel );
+        folder1.add( settings, 'show skeleton' ).onChange( showSkeleton );
+
+        folder2.add( settings, 'deactivate all' );
+        folder2.add( settings, 'activate all' );
+        folder3.add( settings, 'pause/continue' );
+        folder3.add( settings, 'make single step' );
+        folder3.add( settings, 'modify step size', 0.01, 0.1, 0.001 );
+        crossFadeControls.push( folder4.add( settings, 'from walk to idle' ) );
+        crossFadeControls.push( folder4.add( settings, 'from idle to walk' ) );
+        crossFadeControls.push( folder4.add( settings, 'from walk to run' ) );
+        crossFadeControls.push( folder4.add( settings, 'from run to walk' ) );
+        folder4.add( settings, 'use default duration' );
+        folder4.add( settings, 'set custom duration', 0, 10, 0.01 );
+        folder5.add( settings, 'modify idle weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) { setWeight( idleAction, weight ) } );
+        folder5.add( settings, 'modify walk weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) { setWeight( walkAction, weight ) } );
+        folder5.add( settings, 'modify run weight', 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) { setWeight( runAction, weight ) } );
+        folder6.add( settings, 'modify time scale', 0.0, 1.5, 0.01 ).onChange( modifyTimeScale );
+
+        folder1.open();
+        folder2.open();
+        folder3.open();
+        folder4.open();
+        folder5.open();
+        folder6.open();
+
+        crossFadeControls.forEach( function ( control ) {
+
+          control.classList1 = control.domElement.parentElement.parentElement.classList;
+          control.classList2 = control.domElement.previousElementSibling.classList;
+
+          control.setDisabled = function () {
+
+            control.classList1.add( 'no-pointer-events' );
+            control.classList2.add( 'control-disabled' );
+
+          };
+
+          control.setEnabled = function () {
+
+            control.classList1.remove( 'no-pointer-events' );
+            control.classList2.remove( 'control-disabled' );
+
+          };
+
+        } );
+
+      }
+
+
+//控制面板相关函数begin
+            //展示模型函数
+      function showModel( visibility ) {
+
+        mesh.visible = visibility;
+
+      }
+
+            //展示蒙皮函数
+      function showSkeleton( visibility ) {
+
+        skeleton.visible = visibility;
+
+      }
+
+
+            //设置动画的速度函数
+      function modifyTimeScale( speed ) {
+
+        mixer.timeScale = speed;
+
+      }
+
+            //停止动画
+      function deactivateAllActions() {
+        actions.forEach( function ( action ) {
+          action.stop();
+        } );
+      }
+
+
+            //转化weight函数
+          function updateWeightSliders() {
+
+        settings[ 'modify idle weight' ] = idleWeight;
+        settings[ 'modify walk weight' ] = walkWeight;
+        settings[ 'modify run weight' ] = runWeight;
+
+      }
+
+
+            //激活所有的动画（面板）
+      function activateAllActions() {
+        setWeight( idleAction, settings[ 'modify idle weight' ] );
+        setWeight( walkAction, settings[ 'modify walk weight' ] );
+        setWeight( runAction, settings[ 'modify run weight' ] );
+        actions.forEach( function ( action ) {
+          action.play();
+        } );
+      }
+
+            
+            //暂停动画与开始动画之间的转化
+      function pauseContinue() {
+
+        if ( singleStepMode ) {
+
+          singleStepMode = false;
+          unPauseAllActions();
+        } else {
+          if ( idleAction.paused ) {
+            unPauseAllActions();
+          } else {
+            pauseAllActions();
+          }
+        }
+      }
+
+
+            //暂停动画
+      function pauseAllActions() {
+
+        actions.forEach( function ( action ) {
+
+          action.paused = true;
+
+        } );
+
+      }
+
+
+            //开始动画
+      function unPauseAllActions() {
+
+        actions.forEach( function ( action ) {
+
+          action.paused = false;
+
+        } );
+
+      }
+
+            
+            //设置单独的模式
+      function toSingleStepMode() {
+
+        unPauseAllActions();
+
+        singleStepMode = true;
+        sizeOfNextStep = settings[ 'modify step size' ];
+
+      }
+
+
+      function prepareCrossFade( startAction, endAction, defaultDuration ) {
+        var duration = setCrossFadeDuration( defaultDuration );
+        singleStepMode = false;
+        unPauseAllActions();
+        if ( startAction === idleAction ) {
+          executeCrossFade( startAction, endAction, duration );
+        } else {
+          synchronizeCrossFade( startAction, endAction, duration );
+        }
+      }
+
+
+      function setCrossFadeDuration( defaultDuration ) {
+        if ( settings[ 'use default duration' ] ) {
+          return defaultDuration;
+        } else {
+          return settings[ 'set custom duration' ];
+        }
+      }
+
+
+      function synchronizeCrossFade( startAction, endAction, duration ) {
+        mixer.addEventListener( 'loop', onLoopFinished );
+        function onLoopFinished( event ) {
+          if ( event.action === startAction ) {
+            mixer.removeEventListener( 'loop', onLoopFinished );
+            executeCrossFade( startAction, endAction, duration );
+          }
+        }
+      }
+
+
+      function executeCrossFade( startAction, endAction, duration ) {
+        setWeight( endAction, 1 );
+        endAction.time = 0;
+        startAction.crossFadeTo( endAction, duration, true );
+      }
+
+
+            //此功能是必须的
+      function setWeight( action, weight ) {
+        action.enabled = true;
+        action.setEffectiveTimeScale( 1 );
+        action.setEffectiveWeight( weight );
+
+      }
+
+            //回调渲染
+      function updateCrossFadeControls() {
+        crossFadeControls.forEach( function ( control ) {
+          control.setDisabled();
+        } );
+        if ( idleWeight === 1 && walkWeight === 0 && runWeight === 0 ) {
+          crossFadeControls[ 1 ].setEnabled();
+        }
+        if ( idleWeight === 0 && walkWeight === 1 && runWeight === 0 ) {
+          crossFadeControls[ 0 ].setEnabled();
+          crossFadeControls[ 2 ].setEnabled();
+        }
+        if ( idleWeight === 0 && walkWeight === 0 && runWeight === 1 ) {
+          crossFadeControls[ 3 ].setEnabled();
+        }
+      }
+
+
+            //窗口释放
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize( window.innerWidth, window.innerHeight );
+      }
+
+
+//控制面板相关函数end
+
+
+//关于小人动画end
+
+  //webgl加载图片的辅助函数
+      function getTexturesFromAtlasFile( atlasImgUrl, tilesNum ) {
+      var textures = [];
+      for ( var i = 0; i < tilesNum; i ++ ) {
+        textures[ i ] = new THREE.Texture();
+      }
+      var imageObj = new Image();
+      imageObj.onload = function() {
+        var canvas, context;
+        var tileWidth = imageObj.height;
+        for ( var i = 0; i < textures.length; i ++ ) {
+          canvas = document.createElement( 'canvas' );
+          context = canvas.getContext( '2d' );
+          canvas.height = tileWidth;
+          canvas.width = tileWidth;
+          context.drawImage( imageObj, tileWidth * i, 0, tileWidth, tileWidth, 0, 0, tileWidth, tileWidth );
+          textures[ i ].image = canvas
+          textures[ i ].needsUpdate = true;
+        }
+      };
+      imageObj.src = atlasImgUrl;
+      return textures;
+    }
+
+
+
+  //webgl粒子渲染的渲染函数
+      function render2() {
+        var time = Date.now() * 0.00005;
+        for ( var i = 0; i < scene.children.length; i ++ ) {
+          var object = scene.children[ i ];
+          if ( object instanceof THREE.Points ) {
+            object.rotation.y = time * ( i < 4 ? i + 1 : - ( i + 1 ) );
+          }
+        }
+      }
+
+
+
+//全局控制begin
+
+          //加入全局的渲染器
+        container.appendChild( renderer.domElement );
+        //全局对于各种事件的监听
+        document.addEventListener( 'mousedown', onDocumentMouseDown, false );
+        document.addEventListener( 'mousemove', onDocumentMouseMove, false );
+        document.addEventListener( 'mouseup', onDocumentMouseUp, false );
+        document.addEventListener( 'mousewheel', onDocumentMouseWheel, false );
+        document.addEventListener( 'touchstart', onDocumentTouchStart, false );
+        document.addEventListener( 'touchmove', onDocumentTouchMove, false );
+        window.addEventListener( 'resize', onWindowResize, false );
+
+//全局控制end
+
+
+
+//各类功能begin
+
+         
+//关于vr核心功能begin
+
+
+            //在释放窗口时候的函数
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize( window.innerWidth, window.innerHeight );
+      }
+
+
+            //载入图片的函数
+      function loadTexture( path ) {
+        var texture = new THREE.Texture( texture_placeholder );
+        var material = new THREE.MeshBasicMaterial( { map: texture, overdraw: 0.5 } );
+        var image = new Image();
+        image.onload = function () {
+          texture.image = this;
+          texture.needsUpdate = true;
+        };
+        image.src = path;
+        return material;
+      }
+
+//消息响应begin
+           
+           
+           //鼠标点击的响应函数
+      function onDocumentMouseDown( event ) {
+        event.preventDefault();
+        isUserInteracting = true;
+        onPointerDownPointerX = event.clientX;
+        onPointerDownPointerY = event.clientY;
+        onPointerDownLon = lon;
+        onPointerDownLat = lat;
+            //鼠标点击小方块后的响应方法
+        var vector = new THREE.Vector3( ( event.clientX / window.innerWidth ) * 2 - 1, - ( event.clientY / window.innerHeight ) * 2 + 1, 0.5 );
+        projector.unprojectVector( vector, camera );
+        var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+        var intersects = raycaster.intersectObjects(objects);
+        if ( intersects.length > 0 ) {
+          //调用tween函数进行动作
+            new TWEEN.Tween(intersects[0].object.rotation).to({
+                x: Math.random() * 2 * Math.PI, y: Math.random() * 2 * Math.PI, z: Math.random() * 2 * Math.PI
+            }, 2000).easing(TWEEN.Easing.Elastic.Out).start();          
+        }
+      }
+
+
+            //对于鼠标移动事件的相关处理函数
+      function onDocumentMouseMove( event ) {
+        if ( isUserInteracting === true ) {
+          lon = ( onPointerDownPointerX - event.clientX ) * 0.1 + onPointerDownLon;
+          lat = ( event.clientY - onPointerDownPointerY ) * 0.1 + onPointerDownLat;
+        }
+      }
+
+
+            //对于鼠标弹起的函数
+      function onDocumentMouseUp( event ) {
+        isUserInteracting = false;
+      }
+
+
+            //对于鼠标滚轮的函数
+      function onDocumentMouseWheel( event ) {
+        camera.fov -= event.wheelDeltaY * 0.05;
+        camera.updateProjectionMatrix();
+
+      }
+
+
+            //对于触摸开始的函数
+      function onDocumentTouchStart( event ) {
+        if ( event.touches.length == 1 ) {
+          event.preventDefault();
+          onPointerDownPointerX = event.touches[ 0 ].pageX;
+          onPointerDownPointerY = event.touches[ 0 ].pageY;
+          onPointerDownLon = lon;
+          onPointerDownLat = lat;
+        }
+
+      }
+
+
+            //对于触摸移动函数
+      function onDocumentTouchMove( event ) {
+        if ( event.touches.length == 1 ) {
+          event.preventDefault();
+          lon = ( onPointerDownPointerX - event.touches[0].pageX ) * 0.1 + onPointerDownLon;
+          lat = ( event.touches[0].pageY - onPointerDownPointerY ) * 0.1 + onPointerDownLat;
+        }
+      }
+            //消息响应end
+
+
+//动态事件begin
+            //动画函数
+      function animate() {
+               //获取动画
+          requestAnimationFrame( animate );
+          //小方块旋转
+        TWEEN.update();
+        //人物骨骼动画运动
+                idleWeight = idleAction.getEffectiveWeight();
+        walkWeight = walkAction.getEffectiveWeight();
+        runWeight = runAction.getEffectiveWeight();
+                //对于任务运动状态改变的更新
+        updateWeightSliders();
+        updateCrossFadeControls();
+                //关于粒子时钟更新
+        var mixerUpdateDelta = clock.getDelta();
+        if ( singleStepMode ) {
+          mixerUpdateDelta = sizeOfNextStep;
+          sizeOfNextStep = 0;
+        }
+
+
+        //对于人物骨骼的更新
+        mixer.update( mixerUpdateDelta );
+                 update();
+        renderer.render( scene, camera );
+        render2();
+      }
+
+
+            //对于视角变换的更新
+      function update() {
+        lat = Math.max( - 85, Math.min( 85, lat ) );
+        phi = THREE.Math.degToRad( 90 - lat );
+        theta = THREE.Math.degToRad( lon );
+        target.x = 500 * Math.sin( phi ) * Math.cos( theta );
+        target.y = 500 * Math.cos( phi );
+        target.z = 500 * Math.sin( phi ) * Math.sin( theta );
+        camera.lookAt( target );
+        renderer.render( scene, camera );
+      }
+//动态事件end
+
+//关于vr核心功能end
+
+</script>
+
+</html>
+基于OpenCV实现实时监控并通过运动检测记录视频
+一、实验介绍
+1. 实验来源
+
+课程使用的操作系统为 Ubuntu 14.04，OpenCV 版本为OpenCV 2.4.13.1，你可以在这里查看该版本 OpenCV 的文档。官方文档中有两个例子可以帮助你理解此课程，分别是
+
+    OpenCV 3.1.0 版本中背景减除的例子
+    OpenCV 2.4.13 版本中通过直方图比较相似度
+
+你可以在我的 Github仓库 上找到 Windows 系统对应的 Visual Studio 工程。全部代码文件也可以在我的仓库中找到。
+
+这里提供了完整的代码 http://labfile.oss.aliyuncs.com/courses/671/monitor-recorder.zip 。
+2. 内容简介
+
+    课程实验使用PC机自带的摄像头作为监视器进行实时监控。
+    对原始图像做一定处理，使监控人员或监控软件更易发现监控中存在的问题。
+    当摄像头捕捉到运动产生时自动记录视频。
+
+3. 知识点
+
+本课程项目完成过程中将学习：
+
+    对摄像头数据的捕获
+    对捕获到的监控帧作背景处理
+    对监控视频做运动检测并记录视频
+
+二、实验环境
+
+    本实验需要先在实验平台安装 OpenCV ，需下载依赖的库、源代码并编译安装。安装过程建议按照教程给出的步骤，或者你可以参考官方文档中 Linux 环境下的安装步骤，但 有些选项需要变更。安装过程所需时间会比较长，这期间你可以先阅读接下来的教程，在大致了解代码原理后再亲自编写尝试。
+
+    我提供了一个编译好的2.4.13-binary.tar.gz包，你可以通过下面的命令下载并安装，节省了编译的时间，通过这个包安装大概需要20～30分钟，视实验楼当前环境运转速度而定。
+
+    $ sudo apt-get update
+    $ sudo apt-get install build-essential libgtk2.0-dev libjpeg-dev libtiff5-dev libjasper-dev libopenexr-dev cmake python-dev python-numpy python-tk libtbb-dev libeigen2-dev yasm libfaac-dev libopencore-amrnb-dev libopencore-amrwb-dev libtheora-dev libvorbis-dev libxvidcore-dev libx264-dev libqt4-dev libqt4-opengl-dev sphinx-common texlive-latex-extra libv4l-dev libdc1394-22-dev libavcodec-dev libavformat-dev libswscale-dev
+    $ cd ~
+    $ mkdir OpenCV && cd OpenCV
+    $ wget http://labfile.oss.aliyuncs.com/courses/671/2.4.13-binary.tar.gz
+    $ tar -zxvf 2.4.13-binary.tar.gz
+    $ cd opencv-2.4.13
+    $ cd build
+    $ sudo make install
+
+    如果你想体验编译的整个过程，我也提供了一个一键安装的脚本文件，你可以通过下面的命令尝试。这个过程会非常漫长，约2小时，期间可能还需要你做一定的交互确认工作。
+
+    $ cd ~
+    $ sudo apt-get update
+    $ wget http://labfile.oss.aliyuncs.com/courses/671/opencv.sh
+    $ sudo chmod 777 opencv.sh
+    $ ./opencv.sh
+
+    如果你觉得有必要亲自尝试一下安装的每一步，可以按照下面的命令逐条输入执行，在实验楼的环境中大概需要两个小时。
+
+    $ sudo apt-get update
+    $ sudo apt-get install build-essential libgtk2.0-dev libjpeg-dev libtiff5-dev libjasper-dev libopenexr-dev cmake python-dev python-numpy python-tk libtbb-dev libeigen2-dev yasm libfaac-dev libopencore-amrnb-dev libopencore-amrwb-dev libtheora-dev libvorbis-dev libxvidcore-dev libx264-dev libqt4-dev libqt4-opengl-dev sphinx-common texlive-latex-extra libv4l-dev libdc1394-22-dev libavcodec-dev libavformat-dev libswscale-dev
+    $ wget https://github.com/Itseez/opencv/archive/2.4.13.zip
+    $ unzip 2.4.13.zip
+    $ cd 2.4.13
+    $ mkdir release && cd release
+    $ cmake -D WITH_TBB=ON -D BUILD_NEW_PYTHON_SUPPORT=ON -D WITH_V4L=ON -D INSTALL_C_EXAMPLES=ON -D INSTALL_PYTHON_EXAMPLES=ON -D BUILD_EXAMPLES=ON -D WITH_QT=ON -D WITH_GTK=ON -D WITH_OPENGL=ON ..
+    $ sudo make
+    $ sudo make install
+    $ sudo gedit /etc/ld.so.conf.d/opencv.conf   
+    $ 输入 /usr/local/lib，按 Ctrl + X 退出，退出时询问是否保存，按 Y 确认。
+    $ sudo ldconfig -v
+    $ sudo gedit /etc/bash.bashrc
+    $ 在文件末尾加入
+    $ PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig
+    export PKG_CONFIG_PATH
+    按 Ctrl + X 退出，按 Y 确认保存。
+
+    检验配置是否成功。将 OpenCV 自带的例子（在目录PATH_TO_OPENCV/samples/C下）运行检测。如果成功，将显示 lena 的脸部照片，同时圈出其面部。
+
+    $ cd samples/C
+    $ ./build_all.sh
+    $ ./facedetect --cascade="/usr/local/share/OpenCV/haarcascades/haarcascade_frontalface_alt.xml" --scale=1.5 lena.jpg
+
+三、实验原理
+
+实验通过 OpenCV 提供的 API 完成大部分任务，首先捕获摄像头数据，之后对捕获到的每一帧作背景减除处理，得出易于识别的图像，最后利用直方图做实时图像和背景图像的对比，实现运动检测并写入视频文件。
+四、实验步骤
+
+通过以下命令可下载项目源码，作为参照对比完成下面详细步骤的学习。
+
+wget http://labfile.oss.aliyuncs.com/courses/671/monitor-recorder.zip
+unzip monitor-recorder.zip
+
+4.1 定义头文件
+
+工程文件由一个头文件 monitor.hpp 和一个入口文件 main.cpp 构成，在 /home/shiyanlou/ 目录下分别创建这两个文件。首先在头文件 monitor.hpp 中定义将使用的库和相关变量。
+
+代码中使用到的 OpenCV 头文件和 C++ 头文件在头文件 monitor.hpp 中声明如下，其中 unistd.h 包含了 Linux 下的 sleep 函数，参数为睡眠的秒数。
+
+#ifndef __MONITOR_H_
+#define __MONITOR_H_
+
+//opencv
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/video/background_segm.hpp>
+#include <opencv2/objdetect/objdetect.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+//C++
+#include <ctime>
+#include <iostream>
+#include <string>
+#include <cstdio>
+#include <unistd.h> 
+#include <sstream>
+
+using namespace cv;
+using namespace std;
+
+// ...
+
+#endif __MONITOR_H_
+
+4.2 设计 processCamera 函数
+
+processCamera 负责完成主要功能，包括监控数据的获取和处理。首先要了解 OpenCV 中提供的几个 API。
+
+    CvCapture* cvCaptureFromCAM(int device): 此函数捕获指定设备的数据并返回一个 cvCapture 类型指针，捕获失败时返回 NULL。
+    cvCreateFileCapture(char * filepath): 从本地视频读入。
+    CvVideoWriter * cvCreateVideoWriter(char * filepath, , fps, size, is_color): 新建一个视频写入对象，返回其指针，filepath指定写入视频的路径，fps指定写入视频的帧速，size指定写入视频的像素大小，is_color仅在windows下有效，指定写入是否为彩色。
+    double cvGetCaptureProperty(CvCapture* capture, int property_id): 获取一个视频流的某个特性，property_id指定要获取的特性名称。
+    IplImage* cvQueryFrame(CvCapture* capture): 从视频流获取帧。
+    void cvCvtColor(const CvArr* src, CvArr* dst, int code): 按code指定的模式将src指向的帧转换后写入dst指向的地址。
+    void calcHist(const Mat* images, int nimages, const int* channels, InputArray mask, SparseMat& hist, int dims, const int* histSize, const float** ranges, bool uniform, bool accumulate): 为image指向的帧计算直方图，保存在 hist 中。
+    void normalize(const SparseMat& src, SparseMat& dst, double alpha, int normType): 按指定模式将src正常化并写入dst中。
+    double compareHist(const SparseMat& H1, const SparseMat& H2, int method):按method指定的方式比较两个直方图的相似程度。
+    int cvWriteFrame(CvVideoWriter* writer, const IplImage* image): 向视频写入流写入一帧。成功返回 1，否则返回 0。
+
+了解这些API的基本功能后，梳理程序执行的步骤：
+
+    程序开始执行，启动摄像头并获得数据流
+    进入循环：
+        捕获一帧
+        是否为第一帧？是则记录该帧作为监控区域的背景
+        将该帧做适当的变换，输出到监视器中
+        分析该帧和背景帧的相似程度
+        相似程度是否低于阈值且当前没有在记录视频？低于阈值开始记录。
+        相似程度是否低于阈值且当前已经开始记录视频？低于阈值继续记录，否则停止记录。
+    循环中程序的停止，通过接受外部中断相应。
+
+4.3 代码实现 processCamera
+
+    启动摄像头并获得数据流，调用上面提到的cvCaptureFromCAM函数，默认摄像头的 device 为 0。
+
+    void processCamera() {
+     CvCapture *capture = cvCaptureFromCAM(0);
+     if (!capture){
+         cerr << "Unable to open camera " << endl;
+         exit(EXIT_FAILURE);
+     }
+    // TODO...
+    }    // end processCamera
+
+    进入循环，循环条件中使用到一个 keyboard变量用于接收外部中断，如果 Esc 或者 q键被按下则退出循环。keyboard通过 OpenCV 提供的waitKey()函数获得外部按键情况。在下面的循环中，每次先检查视频输入流capture是否为空，防止访问违例内存。在capture不为NULL的情况下，从capture读取一帧。在退出 while循环后，要通过cvReleaseCapture释放此前申请的capture。
+
+    void processCamera() {
+    // ... 
+     Mat frame;                    // current frame
+     while ((char)keyboard != 'q' && (char)keyboard != 27){
+         if (!capture) {
+             cerr << "Unable to read camera" << endl;
+             cerr << "Exiting..." << endl;
+             exit(EXIT_FAILURE);
+         }
+
+         frame = cvQueryFrame(capture);
+
+         // TODO...
+
+         keyboard = waitKey(30);
+     }    // end While
+     cvReleaseCapture(&capture);
+    }    // end processCamera
+
+    判断当前帧是否为第一帧，通过一个bool型变量backGroundFlag来标识。若backGroundFlag为true表示当前帧为第一帧，则记录该帧并将backGroundFlag置为False。此时代码如下。在当前帧为第一帧的情况下，我们不需要记录该帧的真实数据，只需要记录该帧对应的直方图，这里首先将RGB类型的图像转为HSV格式，之后计算该帧的直方图，保存在base中。
+
+    void processCamera() {
+    // ... 
+     bool backGroundFlag = true;
+     Mat frame;                    // current frame
+     Mat HSV;                    // HSV format
+     MatND base;                    // histogram
+     while ((char)keyboard != 'q' && (char)keyboard != 27){
+         if (!capture) {
+             cerr << "Unable to read camera" << endl;
+             cerr << "Exiting..." << endl;
+             exit(EXIT_FAILURE);
+         }
+
+         frame = cvQueryFrame(capture);
+
+         // set background
+         if (backGroundFlag){
+             cvtColor(frame, HSV, CV_BGR2HSV);
+             calcHist(&HSV, 1, channels, Mat(), base, 2, histSize, ranges, true, false);
+             normalize(base, base, 0, 1, NORM_MINMAX, -1, Mat());
+             backGroundFlag = false;
+         }
+
+         // TODO...
+
+         keyboard = waitKey(30);
+     }    // end While
+     cvReleaseCapture(&capture);
+    }    // end processCamera
+
+    对当前帧做适当变换并输出到监视器。此时代码如下。我们要实现的程序可以对原始图像做两种背景减除处理，因此需要用户指定使用哪种方式，这里通过参数传给processCamera，method 为 0 代表使用 MOG2 方式减除， method为 1代表使用 MOG1 方式减除， method为2 代表不作任何变换。两种方式均可以突出背景外的变化情况，实际效果将在最终程序执行时展示。在对原始 frame 做处理并写入 fgMask 后，通过imshow函数输出到监视器中。imshow函数的第一个参数为输出的窗口名，这里先假设已经有一个名为Monitor的窗口等待接收输出，这个窗口将在最终的main函数中创建。用户应当可以指定这个监控程序是否将处理后的图像输出，因此我们传入一个showWindow 参数表明是否显示实时监控窗口。对每一帧的处理方式和上面对背景帧的处理方式相同。
+
+    void processCamera(bool showWindow,
+                    unsigned int method) {
+    // ... 
+     bool backGroundFlag = true;
+     Mat frame;                    // current frame
+     Mat HSV;                    // HSV format
+     MatND base;                    // histogram
+     while ((char)keyboard != 'q' && (char)keyboard != 27){
+         if (!capture) {
+             cerr << "Unable to read camera" << endl;
+             cerr << "Exiting..." << endl;
+             exit(EXIT_FAILURE);
+         }
+
+         frame = cvQueryFrame(capture);
+
+         if (method == 0)
+             pMOG2->operator()(frame, fgMask);
+         else if (method == 1)
+             pMOG->operator()(frame, fgMask);
+         else if (method == 2)
+             fgMask = frame;
+
+         // set background
+         if (backGroundFlag){
+             cvtColor(frame, HSV, CV_BGR2HSV);
+             calcHist(&HSV, 1, channels, Mat(), base, 2, histSize, ranges, true, false);
+             normalize(base, base, 0, 1, NORM_MINMAX, -1, Mat());
+             backGroundFlag = false;
+         }
+
+         cvtColor(frame, HSV, CV_BGR2HSV);
+         calcHist(&HSV, 1, channels, Mat(), cur, 2, histSize, ranges, true, false);
+         normalize(cur, cur, 0, 1, NORM_MINMAX, -1, Mat());
+
+         // TODO ...
+
+         if (showWindow && !fgMask.empty()){
+             imshow("Monitor", fgMask);
+         }
+         keyboard = waitKey(30);
+     } // end While
+     cvReleaseCapture(&capture);
+    }    // end processCamera
+
+    比较当前帧和背景帧的相似度，当出现异常时开始记录视频。这里直接调用compareHist 函数，输出一个 0 - 1 范围内的指标，越接近1 表示两个直方图代表的图像越相似。这里我设置的阈值为 0.65，这个阈值应当根据实际监控区域的光线、色彩等因素修正。我们创建了一个recorder指针用于写入视频，需要指定写入视频的帧速和大小，这里大小通过cvGetCaptureProperty 自动获取，帧速fps由用户传入参数指定。在这里为了避免监控过于敏感的情况出现，设置了一个UnnormalFrames参数，该参数记录当前已经持续出现了多少帧与背景不同的画面，也就是运动状态出现了多久。当 UnnormalFrames 达到用户指定的阈值 unnormal时，我们认为监控中确实出现了异常，因此开始记录。为了更完整的提供监控信息，一旦确认监控中有运动状态发生，在运动结束后，也就是检测到当前帧和背景重新一致后，程序将继续记录视频信息，继续记录的时长和之前运动状态持续的时长相同。代码中通过recordFlag 标识当前是否应该记录视频，在 UnnormalFrames > unnormal时，recordFlag被置位，同时UnnormalFrames随着运动帧被检测持续增加，当运动结束后，UnnormalFrames将递减，至 0 时停止记录视频。这里unnormal通过参数传入processCamera。至此，processCamera函数编写完成。
+
+    void processCamera(bool showWindow, 
+                    unsigned int method, 
+                    unsigned int unnormal = 10, 
+                    unsigned int fps = 24) {
+     CvCapture *capture = cvCaptureFromCAM(0);
+     if (!capture){
+         cerr << "Unable to open camera " << endl;
+         exit(EXIT_FAILURE);
+     }
+
+     bool backGroundFlag = true, recordFlag = false;
+     Mat frame, fgMask;                    // current frame, fg mask
+     Mat HSV;                            // HSV format
+     MatND base, cur;                    // histogram
+     unsigned int UnnormalFrames = 0;
+     int channels[] = { 0, 1 };
+
+     CvSize size = cvSize(
+         (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH),
+         (int)cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT)
+         );
+
+     CvVideoWriter * recorder = cvCreateVideoWriter(recordName, CV_FOURCC('D', 'I', 'V', 'X'), 32, size, 1);
+
+     // ESC or 'q' for quitting
+     while ((char)keyboard != 'q' && (char)keyboard != 27){
+         if (!capture) {
+             cerr << "Unable to read camera" << endl;
+             cerr << "Exiting..." << endl;
+             exit(EXIT_FAILURE);
+         }
+
+         frame = cvQueryFrame(capture);
+         if (method == 0)
+             pMOG2->operator()(frame, fgMask);
+         else if (method == 1)
+             pMOG->operator()(frame, fgMask);
+         else if (method == 2)
+             fgMask = frame;
+
+         // set background
+         if (backGroundFlag){
+             cvtColor(frame, HSV, CV_BGR2HSV);
+             calcHist(&HSV, 1, channels, Mat(), base, 2, histSize, ranges, true, false);
+             normalize(base, base, 0, 1, NORM_MINMAX, -1, Mat());
+             backGroundFlag = false;
+         }
+
+         cvtColor(frame, HSV, CV_BGR2HSV);
+         calcHist(&HSV, 1, channels, Mat(), cur, 2, histSize, ranges, true, false);
+         normalize(cur, cur, 0, 1, NORM_MINMAX, -1, Mat());
+
+         double comp = compareHist(base, cur, 0);
+         if (comp < 0.65)
+             UnnormalFrames += 1;
+         else if (UnnormalFrames > 0)
+             UnnormalFrames--;
+         if (UnnormalFrames > unnormal)
+             recordFlag = true;
+         else if (UnnormalFrames <= 0){
+             UnnormalFrames = 0;
+             recordFlag = false;
+         }
+         // DO SOMETHING WARNING
+         // Here We Starting Recoding
+         if (recordFlag){
+             cvWriteFrame(recorder, &(IplImage(frame)));
+         }
+
+         if (showWindow && !fgMask.empty()){
+             imshow("Monitor", fgMask);
+         }
+         keyboard = waitKey(30);
+     }    // end While
+     cvReleaseVideoWriter(&recorder);
+     cvReleaseCapture(&capture);
+    }    // end processCamera
+
+4.4 定义外部或全局变量
+
+在processCamera函数中使用到了一些函数中没有声明过的变量，这些变量有的是配置使用的常量如ranges等，不需要理解，下面在头文件中声明。pMOG和pMOG2对应了对frame做变换的两个方式，他们将在main函数中被定义。keyboard 用于接收外部键盘输入。其余的均为常量，用于配置 OpenCV 提供的函数。
+
+// ...
+extern Ptr<BackgroundSubtractor> pMOG; //MOG Background subtractor
+extern Ptr<BackgroundSubtractor> pMOG2; //MOG2 Background subtractor
+extern int keyboard;
+
+const float h_ranges[] = { 0, 256 };
+const float s_ranges[] = { 0, 180 };
+const float* ranges[] = { h_ranges, s_ranges };
+
+const int h_bins = 50, s_bins = 60;
+const int histSize[] = { h_bins, s_bins };
+
+extern char recordName[128];
+
+// ...
+
+4.5 编写 main.cpp
+
+下面编写程序入口。
+
+    首先需要告知用户程序的使用方式，编写help函数输出帮助信息。-vis选项用于指定程序显示实时监控，[MODE]参数指定使用何种方式显示监控，[FPS]指定帧速，[THRESHOLD]指定经过多少异常帧后开始记录，[OUTPUTFILE]指定输出视频记录位置。
+
+void help(){
+    cout
+        << "----------------------------------------------------------------------------\n"
+        << "Usage:                                                                      \n"
+        << " ./MonitorRecorder.exe [VIS] [MODE] [FPS] [THRESHOLD] [OUTPUTFILE]          \n"
+        << "   [VIS]  : use -vis to show the monitor window, or it will run background. \n"
+        << "   [MODE] : -src   shows the original frame;                                \n"
+        << "            -mog1       shows the MOG frame;                                \n"
+        << "            -mog2      shows the MOG2 frame.                                \n"
+        << "   [FPS]  : set the fps of record file, default is 24.                      \n"
+        << "   [THRESHOLD]                                                              \n"
+        << "          : set the number x that the monitor will start recording after    \n"
+        << "            x unnormal frames passed.                                       \n"
+        << "   [OUTPUTFILE]                                                             \n"
+        << "          : assign the output recording file. It must be .avi format.       \n"
+        << "                                                   designed by Forec        \n";
+        << "----------------------------------------------------------------------------\n";
+}
+
+    编写main函数。在main函数中我们需要用到外部声明的 pMOG、pMOG2以及recordName。这里需要在函数外声明。主函数中主要部分为解析用户的命令行参数，其中stoi函数需要使用 C++ 11 标准编译。我们使用sleep(2)将processCamera延时 2 秒执行，这个时间你可以离开电脑，让程序捕获你的背景，之后可以回到电脑前，观察监控程序的显示和记录情况。如果用户指定了 -vis 参数，则产生一个Monitor窗口显示实时监控，这个窗口就是此前processCamera函数中输出图像的窗口。在main函数最后，用destroyAllWindows销毁namedWindow产生的窗口。
+
+#include "monitor.hpp"
+
+Ptr<BackgroundSubtractor> pMOG; //MOG Background subtractor
+Ptr<BackgroundSubtractor> pMOG2; //MOG2 Background subtractor
+int keyboard;
+
+char recordName[128];
+
+void help();
+
+int main(int argc, char* argv[]){
+    bool showWindow = false;
+    unsigned int method = 0, unnormal = 10, fps = 24;
+    if (argc > 6){
+        cerr << "Invalid Parameters, Exiting..." << endl;
+        exit(EXIT_FAILURE);
+    }
+    if (argc >= 2){
+        if (strcmp(argv[1], "-vis") == 0)
+            showWindow = true;
+        if (strcmp(argv[1], "-h") == 0 ||
+            strcmp(argv[1], "--help") == 0){
+            help();
+            exit(EXIT_SUCCESS);
+        }
+    }
+    if (argc >= 3){
+        if (strcmp(argv[2], "-mog2") == 0)
+            method = 0;
+        if (strcmp(argv[2], "-mog1") == 0)
+            method = 1;
+        if (strcmp(argv[2], "-src") == 0)
+            method = 2;
+    }
+    if (argc >= 4){
+        int param = stoi(argv[3], nullptr, 10);
+        if (param <= 10)
+            fps = 24;
+        else
+            fps = param;
+    }
+    if (argc >= 5){
+        int param = stoi(argv[4], nullptr, 10);
+        if (param <= 0)
+            unnormal = 10;
+        else
+            unnormal = param;
+    }
+    if (argc >= 6){
+        strcpy(recordName, argv[5]);
+    }
+    else{
+        // set record video file name
+        time_t t = time(NULL);
+        sprintf(recordName, "%d.avi", int(t));
+    }
+
+    cout << "Starts After 2s..." << endl;
+    sleep(2);
+    if (showWindow)
+        namedWindow("Monitor");
+
+    pMOG = new BackgroundSubtractorMOG(); //MOG approach
+    pMOG2 = new BackgroundSubtractorMOG2(); //MOG2 approach
+
+    processCamera(showWindow, method, unnormal, fps);
+
+    destroyAllWindows();
+    return EXIT_SUCCESS;
+}
+
+4.6 编译运行
+
+因为实验楼的环境不提供摄像头，因此我们将程序捕获摄像头的部分修改为程序从一个本地的监控视频中读取，模拟读取摄像头的情况。这需要修改monitor.hpp中的第 38 行，将CvCapture *capture = cvCaptureFromCAM(0); 改为 CvCapture *capture = cvCreateFileCapture("test.mp4");，假设将要读入的本地视频文件名为test.mp4。在修改完你的代码后，你可以通过以下命令下载test.mp4（该视频文件是周杰伦《浪漫手机》的MV），并检验代码。
+
+$ wget http://labfile.oss.aliyuncs.com/courses/671/test.mp4
+
+请确认你已经修改了代码，将读取摄像头改为读取test.mp4，并且将test.mp4已经拷贝到 /home/shiyanlou/ 目录下。在该目录下输入如下命令编译。请检查自己是否已经按照教程开始的环境配置方案配置成功。编译可能产生两个warning。
+
+g++ -ggdb `pkg-config --cflags opencv` -std=c++11 -fpermissive -o `basename main` main.cpp `pkg-config --libs opencv`
+
+编译成功后 /home/shiyanlou/ 目录下将产生一个名为 main的可执行文件，在终端键入如下命令，将使程序输出MOG1处理后的实时监控画面，且画面连续异常10帧后开始记录视频，视频记录到当前文件夹下的out.avi中，帧速 24。
+
+sudo vim /etc/ld.so.conf.d/opencv.conf  
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib  
+sudo ldconfig -v
+./main -vis -mog1 24 10 out.avi
+
+程序按上述命令的运行截图如下。
+4.6-1
+
+以下几张分别是程序在不同显示模式下的显示情况，你可以通过切换-mog1，-mog2和-src来自己观察对应的效果。
+4.6-2
+
+4.6-3
+
+4.6-4
+
+4.6-5
+
+4.6-6
+五、代码获取
+
+你可以在我的 Github仓库 中获取到完整的代码。里面提供了Windows 版本和 Linux版本的配置、运行方案。如果你有建议或想法，欢迎提 PR 沟通。
+六、参考资料
+
+    OpenCV在 Ubuntu下链接库配置
+
